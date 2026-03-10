@@ -18,6 +18,7 @@ from argparse import ArgumentParser
 import wandb
 import torch
 import torch.nn as nn
+import segmentation_models_pytorch as smp
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torchvision.datasets import Cityscapes
@@ -145,7 +146,7 @@ def main(args):
     ).to(device)
 
     # Define the loss function
-    criterion = nn.DiceLoss(ignore_index=255)  # Ignore the void class
+    criterion = smp.losses.DiceLoss(mode='multiclass', ignore_index=255)  # Ignore the void class
 
     # Define the optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
