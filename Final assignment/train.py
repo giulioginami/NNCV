@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
+from torchvision import tv_tensors
 from torchvision.datasets import Cityscapes
 from torchvision.utils import make_grid
 from torchvision.transforms.v2 import (
@@ -28,7 +29,9 @@ from torchvision.transforms.v2 import (
     Resize,
     ToImage,
     ToDtype,
-    InterpolationMode
+    InterpolationMode,
+    RandomCrop,
+    ColorJitter
 )
 
 from model import Model
@@ -124,28 +127,36 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Define the transforms to apply to the data
+    train_transform = Compose([
+        ToImage(),
+        Resize((1024, 512)),
+        RandomCrop((512, 512)),
+        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        ToDtype({tv_tensors.Image: torch.float32, tv_tensors.Mask: torch.int64}, scale=True),
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
     img_transform = Compose([
-    ToImage(),
-    Resize((256, 256)),
-    ToDtype(torch.float32, scale=True),
-    Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ToImage(),
+        Resize((1024, 512)),
+        ToDtype(torch.float32, scale=True),
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     # Target transform (mask)
     target_transform = Compose([
         ToImage(),
-        Resize((256, 256), interpolation=InterpolationMode.NEAREST),
+        Resize((1024, 512), interpolation=InterpolationMode.NEAREST),
         ToDtype(torch.int64),  # no scaling
     ])
 
     # Load the dataset and make a split for training and validation
     train_dataset = Cityscapes(
-    args.data_dir,
-    split="train",
-    mode="fine",
-    target_type="semantic",
-    transform=img_transform,
-    target_transform=target_transform,
+        args.data_dir,
+        split="train",
+        mode="fine",
+        target_type="semantic",
+        transforms=train_transform,
     )
 
     valid_dataset = Cityscapes(
