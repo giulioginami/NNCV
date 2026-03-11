@@ -18,7 +18,6 @@ from argparse import ArgumentParser
 import wandb
 import torch
 import torch.nn as nn
-import segmentation_models_pytorch as smp
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torchvision.datasets import Cityscapes
@@ -55,6 +54,38 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
             color_image[:, i][mask] = color[i]
 
     return color_image
+
+
+class DiceLoss(nn.Module):
+    def __init__(self, ignore_index=255, smooth=1.0):
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.smooth = smooth
+
+    def forward(self, logits, targets):
+        num_classes = logits.shape[1]
+
+        # Convert logits to probabilities with softmax
+        probs = logits.softmax(dim=1)  # (B, C, H, W)
+
+        # Build a mask to exclude ignored pixels (label 255)
+        valid = (targets != self.ignore_index)  # (B, H, W), True = valid pixel
+
+        dice_per_class = []
+        for c in range(num_classes):
+            # Predicted probability for class c, on valid pixels only
+            pred_c = probs[:, c][valid]  # 1D vector
+
+            # Binary ground truth for class c, on valid pixels only
+            true_c = (targets[valid] == c).float()
+
+            # Dice score for class c
+            intersection = (pred_c * true_c).sum()
+            dice = (2.0 * intersection + self.smooth) / (pred_c.sum() + true_c.sum() + self.smooth)
+            dice_per_class.append(dice)
+
+        # Final loss = 1 - mean Dice across all classes
+        return 1.0 - torch.stack(dice_per_class).mean()
 
 
 def get_args_parser():
@@ -146,7 +177,7 @@ def main(args):
     ).to(device)
 
     # Define the loss function
-    criterion = smp.losses.DiceLoss(mode='multiclass', ignore_index=255)  # Ignore the void class
+    criterion = DiceLoss(ignore_index=255)
 
     # Define the optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
