@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# New
+local_data/
+local_output/
+nncv_submission.tar

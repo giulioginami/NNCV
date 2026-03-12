@@ -2,3 +2,4 @@ data/
 *.sif
 *.out
 .env
+model.pt
