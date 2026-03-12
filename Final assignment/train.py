@@ -126,12 +126,16 @@ def main(args):
     # Define the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    class WrapInputs:
+      def __call__(self, img, target):
+        return tv_tensors.Image(img), tv_tensors.Mask(target)
+
     # Define the transforms to apply to the data
     train_transform = Compose([
-        ToImage(),
+        WrapInputs(),
         Resize((512, 1024)),
         RandomCrop((512, 512)),
-        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Color jitter only on the image
         ToDtype({tv_tensors.Image: torch.float32, tv_tensors.Mask: torch.int64}, scale=True),
         Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
