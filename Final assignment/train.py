@@ -133,8 +133,8 @@ def main(args):
     # Define the transforms to apply to the data
     train_transform = Compose([
         WrapInputs(),
-        Resize((512, 1024)),
-        RandomCrop((512, 512)),
+        Resize((256, 512)),
+        RandomCrop((256, 256)),
         ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Color jitter only on the image
         ToDtype({tv_tensors.Image: torch.float32, tv_tensors.Mask: torch.int64}, scale=True),
         Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
@@ -142,7 +142,7 @@ def main(args):
 
     img_transform = Compose([
         ToImage(),
-        Resize((512, 1024)),
+        Resize((256, 512)),
         ToDtype(torch.float32, scale=True),
         Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
@@ -150,7 +150,7 @@ def main(args):
     # Target transform (mask)
     target_transform = Compose([
         ToImage(),
-        Resize((512, 1024), interpolation=InterpolationMode.NEAREST),
+        Resize((256, 512), interpolation=InterpolationMode.NEAREST),
         ToDtype(torch.int64),  # no scaling
     ])
 
