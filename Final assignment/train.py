@@ -15,6 +15,8 @@ Feel free to customize the script as needed for your use case.
 import os
 from argparse import ArgumentParser
 
+import numpy as np
+
 import wandb
 import torch
 import torch.nn as nn
@@ -65,11 +67,11 @@ class DiceLoss(nn.Module):
         self.ignore_index = ignore_index
         self.smooth = smooth
 
-    def forward(self, logits, targets):
+    def forward(self, logits, targets, already_probs=False):
         num_classes = logits.shape[1]
 
-        # Convert logits to probabilities with softmax
-        probs = logits.softmax(dim=1)  # (B, C, H, W)
+        # Convert logits to probabilities (skip softmax if already probabilities)
+        probs = logits if already_probs else logits.softmax(dim=1)  # (B, C, H, W)
 
         # Build a mask to exclude ignored pixels (label 255)
         valid = (targets != self.ignore_index)  # (B, H, W), True = valid pixel
@@ -224,8 +226,10 @@ def main(args):
                 "epoch": epoch + 1,
             }, step=epoch * len(train_dataloader) + i)
             
-        # Validation
+        # Validation with MC Dropout
+        # model.eval() fixes BatchNorm to use running stats; MCDropout stays active.
         model.eval()
+        u_image_scores = []
         with torch.no_grad():
             losses = []
             for i, (images, labels) in enumerate(valid_dataloader):
@@ -235,21 +239,30 @@ def main(args):
 
                 labels = labels.long().squeeze(1)  # Remove channel dimension
 
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                losses.append(loss.item())
-            
-                if i == 0:
-                    predictions = outputs.softmax(1).argmax(1)
+                # 30 stochastic forward passes; accumulate probabilities in-place
+                # to avoid storing all 30 tensors simultaneously.
+                mean_probs = None
+                for _ in range(30):
+                    probs = model(images).softmax(dim=1)
+                    mean_probs = probs if mean_probs is None else mean_probs + probs
+                mean_probs = mean_probs / 30  # (B, C, H, W)
 
-                    predictions = predictions.unsqueeze(1)
-                    labels = labels.unsqueeze(1)
+                loss = criterion(mean_probs, labels, already_probs=True)
+                losses.append(loss.item())
+
+                # Pixel-wise predictive entropy → average over pixels → image score
+                entropy = -(mean_probs * torch.log(mean_probs + 1e-10)).sum(dim=1)  # (B, H, W)
+                u_image_scores.extend(entropy.mean(dim=(1, 2)).cpu().tolist())
+
+                if i == 0:
+                    predictions = mean_probs.argmax(dim=1, keepdim=True)
+                    labels_vis = labels.unsqueeze(1)
 
                     predictions = convert_train_id_to_color(predictions)
-                    labels = convert_train_id_to_color(labels)
+                    labels_vis = convert_train_id_to_color(labels_vis)
 
                     predictions_img = make_grid(predictions.cpu(), nrow=8)
-                    labels_img = make_grid(labels.cpu(), nrow=8)
+                    labels_img = make_grid(labels_vis.cpu(), nrow=8)
 
                     predictions_img = predictions_img.permute(1, 2, 0).numpy()
                     labels_img = labels_img.permute(1, 2, 0).numpy()
@@ -258,10 +271,13 @@ def main(args):
                         "predictions": [wandb.Image(predictions_img)],
                         "labels": [wandb.Image(labels_img)],
                     }, step=(epoch + 1) * len(train_dataloader) - 1)
-            
+
             valid_loss = sum(losses) / len(losses)
+            # tau = 95th percentile of validation uncertainty scores (OOD threshold)
+            tau = float(np.percentile(u_image_scores, 95))
             wandb.log({
-                "valid_loss": valid_loss
+                "valid_loss": valid_loss,
+                "uncertainty_tau": tau,
             }, step=(epoch + 1) * len(train_dataloader) - 1)
 
             if valid_loss < best_valid_loss:
@@ -269,10 +285,13 @@ def main(args):
                 if current_best_model_path:
                     os.remove(current_best_model_path)
                 current_best_model_path = os.path.join(
-                    output_dir, 
+                    output_dir,
                     f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pt"
                 )
                 torch.save(model.state_dict(), current_best_model_path)
+                # Save tau alongside the best checkpoint for use in predict.py
+                with open(os.path.join(output_dir, "tau.txt"), "w") as f:
+                    f.write(str(tau))
         
     print("Training complete!")
 

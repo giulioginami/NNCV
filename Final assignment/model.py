@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Model(nn.Module):
@@ -34,6 +35,9 @@ class Model(nn.Module):
         self.down3 = (Down(256, 512))
         self.down4 = (Down(512, 512))
 
+        # MC Dropout applied at the deep encoder and bottleneck
+        self.dropout = MCDropout(p=0.5)
+
         # Decoding path
         self.up1 = (Up(1024, 256))
         self.up2 = (Up(512, 128))
@@ -57,7 +61,9 @@ class Model(nn.Module):
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
+        x4 = self.dropout(x4)   # MC Dropout — deep encoder
         x5 = self.down4(x4)
+        x5 = self.dropout(x5)   # MC Dropout — bottleneck
 
         # Decoding path
         x = self.up1(x5, x4)
@@ -124,3 +130,18 @@ class OutConv(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
+
+
+class MCDropout(nn.Module):
+    """Spatial dropout that stays active during model.eval() for MC Dropout inference.
+
+    Standard nn.Dropout is disabled when the model is in eval mode. This class
+    hardcodes training=True in the functional call so that dropout is always applied,
+    allowing multiple stochastic forward passes at inference time.
+    """
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x):
+        return F.dropout2d(x, p=self.p, training=True)
