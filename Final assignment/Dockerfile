@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir \
     pillow
 
 WORKDIR /app
-COPY predict.py /app/predict.py
+COPY predict_ood.py /app/predict.py
 COPY model.py /app/model.py
 COPY model.pt /app/model.pt
 

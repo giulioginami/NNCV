@@ -1,16 +1,16 @@
 """
-Prediction pipeline with MC Dropout OOD detection.
+This script provides and example implementation of a prediction pipeline
+for a PyTorch U-Net model. It loads a pre-trained model, processes input
+images, and saves the predicted segmentation masks.
 
-For every test image the model runs 30 stochastic forward passes (dropout kept
-active), averages the class probabilities, and computes a predictive-entropy
-image score U_image.  If U_image exceeds the threshold tau (calibrated on the
-validation set at the 95th percentile and saved during training), the image is
-flagged as OOD and no prediction is written.  Otherwise the argmax of the mean
-probabilities is saved as the segmentation mask.
+You can use this file for submissions to the Challenge server. Customize
+the `preprocess` and `postprocess` functions to fit your model's input
+and output requirements.
 """
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import numpy as np
 from PIL import Image
 from torchvision.transforms.v2 import (
@@ -24,89 +24,84 @@ from torchvision.transforms.v2 import (
 
 from model import Model
 
-# Fixed paths inside participant container — do NOT change.
+# Fixed paths inside participant container
+# Do NOT chnage the paths, these are fixed locations where the server will
+# provide input data and expect output data.
+# Only for local testing, you can change these paths to point to your local data and output folders.
 IMAGE_DIR = "/data"
 OUTPUT_DIR = "/output"
 MODEL_PATH = "/app/model.pt"
-TAU_PATH = "/app/tau.txt"   # OOD threshold saved during training
-
-N_MC_PASSES = 30            # Number of stochastic forward passes
 
 
 def preprocess(img: Image.Image) -> torch.Tensor:
+    # Implement your preprocessing steps here
+    # For example, resizing, normalization, etc.
+    # Return a tensor suitable for model input
     transform = Compose([
         ToImage(),
         Resize(size=(256, 512), interpolation=InterpolationMode.BILINEAR),
         ToDtype(dtype=torch.float32, scale=True),
-        Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        Normalize(mean=(0.5,), std=(0.5,)),
     ])
-    return transform(img).unsqueeze(0)  # (1, C, H, W)
+
+    img = transform(img)
+    img = img.unsqueeze(0)  # Add batch dimension
+    return img
 
 
-def postprocess(mean_probs: torch.Tensor, original_shape: tuple) -> np.ndarray:
-    """Convert mean class probabilities to a resized label map."""
-    pred_max = torch.argmax(mean_probs, dim=1, keepdim=True)  # (1, 1, H, W)
+def postprocess(pred: torch.Tensor, original_shape: tuple) -> np.ndarray:
+    # Implement your postprocessing steps here
+    # For example, resizing back to original shape, converting to color mask, etc.
+    # Return a numpy array suitable for saving as an image
+    pred_soft = nn.Softmax(dim=1)(pred)
+    pred_max = torch.argmax(pred_soft, dim=1, keepdim=True)  # Get the class with the highest probability
     prediction = Resize(size=original_shape, interpolation=InterpolationMode.NEAREST)(pred_max)
-    return prediction.cpu().numpy().squeeze().astype(np.uint8)
 
+    prediction_numpy = prediction.cpu().detach().numpy()
+    prediction_numpy = prediction_numpy.squeeze()  # Remove batch and channel dimensions if necessary
 
-def compute_uncertainty(mean_probs: torch.Tensor) -> float:
-    """Predictive entropy averaged over all pixels → scalar image score."""
-    entropy = -(mean_probs * torch.log(mean_probs + 1e-10)).sum(dim=1)  # (1, H, W)
-    return entropy.mean().item()
+    return prediction_numpy
 
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Load model — MCDropout stays active even in eval() mode.
+    # Load model
     model = Model()
-    state_dict = torch.load(MODEL_PATH, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict, strict=True)
+    state_dict = torch.load(
+        MODEL_PATH,
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(
+        state_dict,
+        strict=True,  # Ensure the state dict matches the model architecture
+    )
     model.eval().to(device)
 
-    # Load the OOD threshold calibrated on the validation set.
-    tau = float(open(TAU_PATH).read().strip())
-    print(f"OOD threshold tau = {tau:.6f}")
-
-    image_files = list(Path(IMAGE_DIR).glob("*.png"))  # DO NOT CHANGE
+    image_files = list(Path(IMAGE_DIR).glob("*.png"))  # DO NOT CHANGE, IMAGES WILL BE PROVIDED IN THIS FORMAT
     print(f"Found {len(image_files)} images to process.")
-
-    n_accepted = n_rejected = 0
 
     with torch.no_grad():
         for img_path in image_files:
             img = Image.open(img_path)
             original_shape = np.array(img).shape[:2]
 
+            # Preprocess
             img_tensor = preprocess(img).to(device)
 
-            # --- MC Dropout: N_MC_PASSES stochastic forward passes ---
-            # Probabilities are accumulated in-place to keep memory usage low.
-            mean_probs = None
-            for _ in range(N_MC_PASSES):
-                probs = model(img_tensor).softmax(dim=1)
-                mean_probs = probs if mean_probs is None else mean_probs + probs
-            mean_probs = mean_probs / N_MC_PASSES  # (1, C, H, W)
+            # Forward pass
+            pred = model(img_tensor)
 
-            # --- Gatekeeper ---
-            u_image = compute_uncertainty(mean_probs)
+            # Postprocess to segmentation mask
+            seg_pred = postprocess(pred, original_shape)
 
+            # Create mirrored output folder
             out_path = Path(OUTPUT_DIR) / img_path.name
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if u_image > tau:
-                # OOD: model is more uncertain than 95 % of normal validation data.
-                # Reject — write no prediction for this image.
-                print(f"[OOD ] {img_path.name}  U={u_image:.5f} > tau={tau:.5f}")
-                n_rejected += 1
-            else:
-                # ID: uncertainty is within the normal range — segment and save.
-                seg_pred = postprocess(mean_probs, original_shape)
-                Image.fromarray(seg_pred).save(out_path)
-                n_accepted += 1
-
-    print(f"Done.  Accepted (ID): {n_accepted}  |  Rejected (OOD): {n_rejected}")
+            # Save predicted mask
+            Image.fromarray(seg_pred.astype(np.uint8)).save(out_path)
 
 
 if __name__ == "__main__":
