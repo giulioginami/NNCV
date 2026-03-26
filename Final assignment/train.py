@@ -136,7 +136,6 @@ def main(args):
     train_transform = Compose([
         WrapInputs(),
         Resize((256, 512)),
-        RandomCrop((256, 256)),
         ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), # Color jitter only on the image
         ToDtype({tv_tensors.Image: torch.float32, tv_tensors.Mask: torch.int64}, scale=True),
         Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
