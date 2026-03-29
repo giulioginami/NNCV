@@ -1,10 +1,10 @@
 """
-This script provides and example implementation of a prediction pipeline
-for a PyTorch U-Net model. It loads a pre-trained model, processes input
-images, and saves the predicted segmentation masks.
+This script provides and example implementation of a prediction pipeline 
+for a PyTorch U-Net model. It loads a pre-trained model, processes input 
+images, and saves the predicted segmentation masks. 
 
-You can use this file for submissions to the Challenge server. Customize
-the `preprocess` and `postprocess` functions to fit your model's input
+You can use this file for submissions to the Challenge server. Customize 
+the `preprocess` and `postprocess` functions to fit your model's input 
 and output requirements.
 """
 from pathlib import Path
@@ -14,10 +14,10 @@ import torch.nn as nn
 import numpy as np
 from PIL import Image
 from torchvision.transforms.v2 import (
-    Compose,
-    ToImage,
-    Resize,
-    ToDtype,
+    Compose, 
+    ToImage, 
+    Resize, 
+    ToDtype, 
     Normalize,
     InterpolationMode,
 )
@@ -25,7 +25,7 @@ from torchvision.transforms.v2 import (
 from model import Model
 
 # Fixed paths inside participant container
-# Do NOT chnage the paths, these are fixed locations where the server will
+# Do NOT chnage the paths, these are fixed locations where the server will 
 # provide input data and expect output data.
 # Only for local testing, you can change these paths to point to your local data and output folders.
 IMAGE_DIR = "/data"
@@ -39,7 +39,7 @@ def preprocess(img: Image.Image) -> torch.Tensor:
     # Return a tensor suitable for model input
     transform = Compose([
         ToImage(),
-        Resize(size=(256, 512), interpolation=InterpolationMode.BILINEAR),
+        Resize(size=(256, 256), interpolation=InterpolationMode.BILINEAR),
         ToDtype(dtype=torch.float32, scale=True),
         Normalize(mean=(0.5,), std=(0.5,)),
     ])
@@ -69,12 +69,12 @@ def main():
     # Load model
     model = Model()
     state_dict = torch.load(
-        MODEL_PATH,
+        MODEL_PATH, 
         map_location=device,
         weights_only=True,
     )
     model.load_state_dict(
-        state_dict,
+        state_dict, 
         strict=True,  # Ensure the state dict matches the model architecture
     )
     model.eval().to(device)
