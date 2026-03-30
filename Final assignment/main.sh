@@ -1,4 +1,4 @@
-wandb login
+wandb login $WANDB_API_KEY
 
 python3 train.py \
     --data-dir ./data/cityscapes \
