@@ -62,7 +62,8 @@ def get_args_parser():
     parser.add_argument("--data-dir", type=str, default="./data/cityscapes", help="Path to the training data")
     parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate for the decoder and segmentation head")
+    parser.add_argument("--encoder-lr", type=float, default=0.0001, help="Learning rate for the pretrained encoder")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers for data loaders")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--experiment-id", type=str, default="unet-training", help="Experiment ID for Weights & Biases")
@@ -147,8 +148,15 @@ def main(args):
     # Define the loss function
     criterion = nn.CrossEntropyLoss(ignore_index=255)  # Ignore the void class
 
-    # Define the optimizer
-    optimizer = AdamW(model.parameters(), lr=args.lr)
+    # Define the optimizer with separate learning rates for encoder and decoder.
+    # The encoder is pretrained on ImageNet, so it needs a smaller lr to preserve
+    # the learned features. The decoder and segmentation head are trained from
+    # scratch, so they can use a larger lr.
+    optimizer = AdamW([
+        {'params': model.net.encoder.parameters(),            'lr': args.encoder_lr},
+        {'params': model.net.decoder.parameters(),            'lr': args.lr},
+        {'params': model.net.segmentation_head.parameters(),  'lr': args.lr},
+    ])
 
     # Training loop
     best_valid_loss = float('inf')
