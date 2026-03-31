@@ -8,4 +8,4 @@ python3 train.py \
     --encoder-lr 0.0001 \
     --num-workers 10 \
     --seed 42 \
-    --experiment-id "Unet+ResNet" \
+    --experiment-id "ResNet+" \

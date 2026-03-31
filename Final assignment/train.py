@@ -28,7 +28,9 @@ from torchvision.transforms.v2 import (
     Resize,
     ToImage,
     ToDtype,
-    InterpolationMode
+    InterpolationMode,
+    ColorJitter,
+    GaussianBlur,
 )
 
 from model import Model
@@ -54,6 +56,40 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
             color_image[:, i][mask] = color[i]
 
     return color_image
+
+
+def dice_loss(pred: torch.Tensor, target: torch.Tensor, ignore_index: int = 255, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Soft Dice loss for multi-class segmentation.
+
+    Args:
+        pred:         (B, C, H, W) raw logits
+        target:       (B, H, W)   ground-truth train IDs
+        ignore_index: pixels with this label are excluded from the loss
+        eps:          small constant for numerical stability
+    """
+    pred_soft = torch.softmax(pred, dim=1)          # (B, C, H, W) — probabilities
+
+    # Build a boolean mask for valid pixels and clamp ignored ones to 0
+    valid = (target != ignore_index)                # (B, H, W)
+    target_clamped = target.clone()
+    target_clamped[~valid] = 0
+
+    # One-hot encode the target: (B, H, W) → (B, C, H, W)
+    target_onehot = torch.zeros_like(pred_soft)
+    target_onehot.scatter_(1, target_clamped.unsqueeze(1), 1.0)
+
+    # Zero out ignored pixels in both tensors
+    valid_4d = valid.unsqueeze(1).expand_as(pred_soft)
+    pred_soft    = pred_soft    * valid_4d
+    target_onehot = target_onehot * valid_4d
+
+    # Per-class Dice score, then average across classes
+    intersection = (pred_soft * target_onehot).sum(dim=(0, 2, 3))
+    denominator  = pred_soft.sum(dim=(0, 2, 3)) + target_onehot.sum(dim=(0, 2, 3))
+    dice         = (2.0 * intersection + eps) / (denominator + eps)
+
+    return 1.0 - dice.mean()
 
 
 def get_args_parser():
@@ -92,29 +128,43 @@ def main(args):
     # Define the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Define the transforms to apply to the data
-    img_transform = Compose([
-    ToImage(),
-    Resize((256, 256)),
-    ToDtype(torch.float32, scale=True),
-    Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
+    # Training image transform 
+    # Color Jitter and GaussianBlur expect pixel values in [0,1], so Normalization is apllied
+    # manually in the training loop, after augmentation
+    train_img_transform = Compose([
+        ToImage(),
+        Resize((512, 256)),
+        ToDtype(torch.float32, scale=True),     # → [0, 1]
     ])
 
-    # Target transform (mask)
+    # Validation image transform — full pipeline, no augmentation.
+    val_img_transform = Compose([
+        ToImage(),
+        Resize((512, 256)),
+        ToDtype(torch.float32, scale=True),
+        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
+    ])
+
+    # Target transform (mask) — identical for train and val.
     target_transform = Compose([
         ToImage(),
-        Resize((256, 256), interpolation=InterpolationMode.NEAREST),
+        Resize((512, 256), interpolation=InterpolationMode.NEAREST),
         ToDtype(torch.int64),  # no scaling
     ])
 
+    # Transforms applied manually in the training loop
+    img_normalize   = Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    train_color_jitter  = ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+    train_gaussian_blur = GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))
+
     # Load the dataset and make a split for training and validation
     train_dataset = Cityscapes(
-    args.data_dir,
-    split="train",
-    mode="fine",
-    target_type="semantic",
-    transform=img_transform,
-    target_transform=target_transform,
+        args.data_dir,
+        split="train",
+        mode="fine",
+        target_type="semantic",
+        transform=train_img_transform,      # no normalize — applied after augmentation
+        target_transform=target_transform,
     )
 
     valid_dataset = Cityscapes(
@@ -122,7 +172,7 @@ def main(args):
         split="val",
         mode="fine",
         target_type="semantic",
-        transform=img_transform,
+        transform=val_img_transform,        # full pipeline, no augmentation
         target_transform=target_transform,
     )
 
@@ -171,18 +221,40 @@ def main(args):
             labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
             images, labels = images.to(device), labels.to(device)
 
-            labels = labels.long().squeeze(1)  # Remove channel dimension
+            labels = labels.long().squeeze(1)  # (B, H, W)
+
+            # Spatial augmentation: horizontal flip 
+            # Applied per sample so each image gets an independent flip decision.
+            # The exact same flip is applied to the image and its mask to keep
+            # them aligned. Color/blur augmentations must NOT touch the mask.
+            flip_mask = torch.rand(images.shape[0], device=device) < 0.5
+            images[flip_mask] = torch.flip(images[flip_mask], dims=[-1])
+            labels[flip_mask] = torch.flip(labels[flip_mask], dims=[-1])
+
+            # Image-only augmentations (applied before normalization)
+            images = train_color_jitter(images)
+            images = train_gaussian_blur(images)
+
+            # Normalize after augmentation 
+            images = img_normalize(images)
 
             optimizer.zero_grad()
             outputs = model(images)
-            loss = criterion(outputs, labels)
+
+            # Combined loss: CrossEntropy + Dice
+            ce   = criterion(outputs, labels)
+            dice = dice_loss(outputs, labels)
+            loss = ce + dice
+
             loss.backward()
             optimizer.step()
 
             wandb.log({
-                "train_loss": loss.item(),
-                "learning_rate": optimizer.param_groups[0]['lr'],
-                "epoch": epoch + 1,
+                "train_loss":      loss.item(),
+                "train_ce_loss":   ce.item(),
+                "train_dice_loss": dice.item(),
+                "learning_rate":   optimizer.param_groups[0]['lr'],
+                "epoch":           epoch + 1,
             }, step=epoch * len(train_dataloader) + i)
             
         # Validation
@@ -197,7 +269,9 @@ def main(args):
                 labels = labels.long().squeeze(1)  # Remove channel dimension
 
                 outputs = model(images)
-                loss = criterion(outputs, labels)
+                ce   = criterion(outputs, labels)
+                dice = dice_loss(outputs, labels)
+                loss = ce + dice
                 losses.append(loss.item())
             
                 if i == 0:
