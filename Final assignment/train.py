@@ -19,6 +19,7 @@ import wandb
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torchvision.datasets import Cityscapes
 from torchvision.transforms.v2 import (
@@ -305,6 +306,10 @@ def main(args):
         {'params': model.net.segmentation_head.parameters(),  'lr': args.lr},
     ])
 
+    # Cosine annealing: smoothly decays each param group from its initial lr
+    # down to eta_min over all epochs, reducing late-training oscillations.
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+
     # Training loop
     best_valid_loss = float('inf')
     current_best_model_path = None
@@ -397,11 +402,13 @@ def main(args):
                 if current_best_model_path:
                     os.remove(current_best_model_path)
                 current_best_model_path = os.path.join(
-                    output_dir, 
+                    output_dir,
                     f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pt"
                 )
                 torch.save(model.state_dict(), current_best_model_path)
-        
+
+        scheduler.step()
+
     print("Training complete!")
 
     # Save the model
