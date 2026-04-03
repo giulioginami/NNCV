@@ -3,7 +3,7 @@ Prediction pipeline for the U-Net + ResNet-34 segmentation model.
 
 Inference uses a sliding-window strategy that mirrors validation in train.py:
   1. The full image is normalized without resizing.
-  2. It is tiled into non-overlapping PATCH_SIZE x PATCH_SIZE patches.
+  2. It is tiled into overlapping PATCH_SIZE x PATCH_SIZE patches.
   3. All patches are forwarded through the model in one batched call.
   4. Predictions are stitched back into a full-resolution mask.
 
@@ -51,8 +51,9 @@ def predict_sliding_window(model, image_tensors: torch.Tensor, device) -> np.nda
     """
     Run sliding-window inference on a batch of full images.
 
-    For each patch position, the same patch is extracted from all B images and
-    forwarded together, halving GPU overhead compared to one image at a time.
+    Patches overlap by 50% (stride = PATCH_SIZE // 2).  Softmax probabilities
+    are accumulated in a full-resolution buffer; overlapping regions are averaged
+    before argmax, eliminating boundary seams.
 
     Args:
         model:         trained model in eval mode
@@ -63,24 +64,24 @@ def predict_sliding_window(model, image_tensors: torch.Tensor, device) -> np.nda
         (B, H, W) uint8 numpy array of predicted class IDs
     """
     B, _, H, W = image_tensors.shape
-    pred_masks = torch.zeros(B, H, W, dtype=torch.long)
+    stride    = PATCH_SIZE // 2
+    n_classes = 19
 
-    row_starts = sorted(set(list(range(0, H - PATCH_SIZE + 1, PATCH_SIZE)) + [H - PATCH_SIZE]))
-    col_starts = sorted(set(list(range(0, W - PATCH_SIZE + 1, PATCH_SIZE)) + [W - PATCH_SIZE]))
+    prob_sum = torch.zeros(B, n_classes, H, W, dtype=torch.float32)
+    count    = torch.zeros(B, 1,         H, W, dtype=torch.float32)
 
-    patches, positions = [], []
+    row_starts = sorted(set(list(range(0, H - PATCH_SIZE + 1, stride)) + [H - PATCH_SIZE]))
+    col_starts = sorted(set(list(range(0, W - PATCH_SIZE + 1, stride)) + [W - PATCH_SIZE]))
+
     for r in row_starts:
         for c in col_starts:
-            patches.append(image_tensors[:, :, r:r+PATCH_SIZE, c:c+PATCH_SIZE])  # (B, 3, P, P)
-            positions.append((r, c))
+            patch  = image_tensors[:, :, r:r+PATCH_SIZE, c:c+PATCH_SIZE].to(device)  # (B, 3, P, P)
+            logits = model(patch)                                                       # (B, 19, P, P)
+            probs  = torch.softmax(logits, dim=1).cpu()                                # (B, 19, P, P)
+            prob_sum[:, :, r:r+PATCH_SIZE, c:c+PATCH_SIZE] += probs
+            count[:,    0, r:r+PATCH_SIZE, c:c+PATCH_SIZE] += 1.0
 
-    batch  = torch.cat(patches, dim=0).to(device)    # (N*B, 3, P, P)
-    logits = model(batch)                            # (N*B, 19, P, P)
-    preds  = logits.argmax(dim=1).cpu()              # (N*B, P, P)
-
-    for i, (r, c) in enumerate(positions):
-        pred_masks[:, r:r+PATCH_SIZE, c:c+PATCH_SIZE] = preds[i*B:(i+1)*B]
-
+    pred_masks = (prob_sum / count).argmax(dim=1)  # (B, H, W)
     return pred_masks.numpy().astype(np.uint8)
 
 

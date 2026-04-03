@@ -19,7 +19,7 @@ import wandb
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+# from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torchvision.datasets import Cityscapes
 from torchvision.transforms.v2 import (
@@ -119,11 +119,13 @@ class RandomCropDataset(torch.utils.data.Dataset):
 
 def sliding_window_inference(model, images: torch.Tensor, patch_size: int, device) -> torch.Tensor:
     """
-    Run inference on a batch of full images by tiling into non-overlapping patches.
+    Run inference on a batch of full images by tiling into overlapping patches.
 
-    For each patch position, the same patch is extracted from all B images and
-    stacked into one GPU call, so all B images share a single forward pass per
-    position.  This halves GPU overhead compared to processing images one by one.
+    Patches overlap by 50% (stride = patch_size // 2).  For each position the
+    patch is extracted from all B images and forwarded together.  Softmax
+    probabilities are accumulated into a full-resolution buffer; overlapping
+    regions are averaged before the final argmax, eliminating seams at patch
+    borders.
 
     Args:
         model:      trained model in eval mode
@@ -135,25 +137,26 @@ def sliding_window_inference(model, images: torch.Tensor, patch_size: int, devic
         (B, H, W) long tensor of predicted class IDs on CPU
     """
     B, _, H, W = images.shape
-    pred_masks = torch.zeros(B, H, W, dtype=torch.long)
+    stride    = patch_size // 2
+    n_classes = 19
 
-    # Build start coordinates; the last entry is always clipped to the edge
-    row_starts = sorted(set(list(range(0, H - patch_size + 1, patch_size)) + [H - patch_size]))
-    col_starts = sorted(set(list(range(0, W - patch_size + 1, patch_size)) + [W - patch_size]))
+    # Softmax accumulator and per-pixel coverage count (kept on CPU)
+    prob_sum = torch.zeros(B, n_classes, H, W, dtype=torch.float32)
+    count    = torch.zeros(B, 1,         H, W, dtype=torch.float32)
 
-    patches, positions = [], []
+    row_starts = sorted(set(list(range(0, H - patch_size + 1, stride)) + [H - patch_size]))
+    col_starts = sorted(set(list(range(0, W - patch_size + 1, stride)) + [W - patch_size]))
+
     for r in row_starts:
         for c in col_starts:
-            patches.append(images[:, :, r:r+patch_size, c:c+patch_size])  # (B, 3, P, P)
-            positions.append((r, c))
+            patch  = images[:, :, r:r+patch_size, c:c+patch_size].to(device)  # (B, 3, P, P)
+            logits = model(patch)                                               # (B, 19, P, P)
+            probs  = torch.softmax(logits, dim=1).cpu()                        # (B, 19, P, P)
+            prob_sum[:, :, r:r+patch_size, c:c+patch_size] += probs
+            count[:,    0, r:r+patch_size, c:c+patch_size] += 1.0
 
-    batch   = torch.cat(patches, dim=0).to(device)   # (N*B, 3, P, P)
-    logits  = model(batch)                           # (N*B, 19, P, P)
-    preds   = logits.argmax(dim=1).cpu()             # (N*B, P, P)
-
-    for i, (r, c) in enumerate(positions):
-        pred_masks[:, r:r+patch_size, c:c+patch_size] = preds[i*B:(i+1)*B]
-
+    # Average overlapping regions then take argmax
+    pred_masks = (prob_sum / count).argmax(dim=1).long()  # (B, H, W)
     return pred_masks
 
 
@@ -308,7 +311,7 @@ def main(args):
 
     # Cosine annealing: smoothly decays each param group from its initial lr
     # down to eta_min over all epochs, reducing late-training oscillations.
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    # scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     # Training loop
     best_valid_loss = float('inf')
@@ -407,7 +410,7 @@ def main(args):
                 )
                 torch.save(model.state_dict(), current_best_model_path)
 
-        scheduler.step()
+        # scheduler.step()
 
     print("Training complete!")
 
