@@ -21,7 +21,12 @@ RUN pip install --no-cache-dir \
     torch torchvision --index-url https://download.pytorch.org/whl/cu126
 RUN pip install --no-cache-dir \
     pillow \
-    segmentation-models-pytorch
+    segmentation-models-pytorch \
+    wandb
+
+RUN python3 -c "\
+import segmentation_models_pytorch as smp; \
+smp.Unet(encoder_name='resnet34', encoder_weights='imagenet', in_channels=3, classes=19)"
 
 WORKDIR /app
 COPY predict.py /app/predict.py

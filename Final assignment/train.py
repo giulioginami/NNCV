@@ -33,7 +33,7 @@ from torchvision.transforms.v2 import (
 
 from model import Model
 
-PATCH_SIZE = 256   # model input resolution; must match training crop size
+PATCH_SIZE = 256   
 
 # Mapping class IDs to train IDs
 id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}

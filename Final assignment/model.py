@@ -27,8 +27,6 @@ class Model(nn.Module):
     time, calling enable_dropout(model) after model.eval() keeps them active
     for Monte Carlo Dropout uncertainty estimation.
 
-    nn.Dropout2d has no learnable parameters, so adding it does NOT change
-    the state-dict key layout — existing checkpoints load without modification.
     """
     def __init__(
         self,
@@ -45,8 +43,6 @@ class Model(nn.Module):
         )
 
         # Append Dropout2d after every decoder block's second conv.
-        # smp.Unet decoder has 5 DecoderBlock objects (one per skip-connection
-        # level).  Each block exposes a .conv2 attribute (Conv2dReLU).
         for block in self.net.decoder.blocks:
             block.conv2 = nn.Sequential(block.conv2, nn.Dropout2d(p=dropout_p))
 
