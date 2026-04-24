@@ -11,7 +11,7 @@
 
 This repository contains the full pipeline for semantic segmentation and out-of-distribution (OOD) detection on the Cityscapes dataset. The project is structured in three stages:
 
-1. **Baseline** — vanilla U-Net trained at 256×256 with softmax confidence as OOD metric.
+1. **Baseline** — vanilla U-Net trained at 256×256 with softmax entropy as OOD metric.
 2. **Peak Performance** — ResNet-34 encoder U-Net with multi-scale inference (non-overlapping then overlapping sliding windows).
 3. **OOD Detection** — Monte Carlo Dropout applied to the baseline and top-performance model; predictive entropy as a calibrated uncertainty metric.
 
