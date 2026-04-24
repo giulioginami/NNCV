@@ -201,6 +201,4 @@ Notebook for analysis of results and threshold calibration. Run all cells top-to
 | Benchmark | URL |
 |---|---|
 | Baseline / Peak Performance | http://131.155.126.249:5001/ |
-| Robustness | http://131.155.126.249:5002/ |
-| Efficiency | http://131.155.126.249:5003/ |
 | Out-of-Distribution | http://131.155.126.249:5004/ |
