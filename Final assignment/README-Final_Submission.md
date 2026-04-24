@@ -186,11 +186,11 @@ Notebook for analysis of results and threshold calibration. Run all cells top-to
 
 | File | Architecture | Used in |
 |---|---|---|
-| `model_baseline.pt` | Vanilla U-Net | Section 1, `predict_ood.py` baseline |
-| `model_baseline_ood.pt` | Vanilla U-Net + MC Dropout | Section 3.1, `predict_ood.py` |
+| `model_baseline.pt` | Vanilla U-Net | Section 1 |
+| `model_baseline_ood.pt` | Vanilla U-Net + MC Dropout | Section 3.1 |
 | `model_no_overlap.pt` | ResNet-34 U-Net | Section 2.1 |
 | `model_overlap.pt` | ResNet-34 U-Net | Section 2.2 |
-| `model_overlap_ood.pt` | ResNet-34 U-Net + MC Dropout | Section 3.2, `predict.py` |
+| `model_overlap_ood.pt` | ResNet-34 U-Net + MC Dropout | Section 3.2 |
 
 ---
 
