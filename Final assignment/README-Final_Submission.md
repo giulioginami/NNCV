@@ -156,7 +156,7 @@ Used with `model_baseline_ood.pt` and `model_baseline_ood.py` for the **OOD chal
 Used with `model_overlap_ood.pt` and `model.py` for the **OOD challenge**.
 
 **Pipeline per image:**
-1. Resize to 2048×1024, apply ImageNet normalization
+1. Resize to 1024x2048, apply ImageNet normalization
 2. **MC uncertainty pass** (Dropout ON): 30 lo-res stochastic passes at 128×256 → predictive entropy → OOD flag
 3. **Hi-res sliding-window pass** (Dropout OFF): overlapping 256×256 patches with stride 128 (50% overlap) → averaged patch probabilities
 4. **Class-specific blend**: per-class weighting of hi-res and lo-res probabilities — local classes weighted higher hi-res detail; global classes weighted higher lo-res context
