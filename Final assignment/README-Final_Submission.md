@@ -194,7 +194,7 @@ Notebook for analysis of results and threshold calibration. Run all cells top-to
 
 ---
 
-## Challenge Server Endpoints
+## Challenge Server 
 
 > Accessible only from the TU/e campus network or VPN.
 
@@ -202,3 +202,19 @@ Notebook for analysis of results and threshold calibration. Run all cells top-to
 |---|---|
 | Baseline / Peak Performance | http://131.155.126.249:5001/ |
 | Out-of-Distribution | http://131.155.126.249:5004/ |
+
+### Peak Performance Benchmark
+
+| Model | Architecture | Name |
+|---|---|---|
+| `model_baseline.pt` | Vanilla U-Net | 'Giulio_baseline' |
+| `model_no_overlap.pt` | ResNet-34 U-Net | 'Giulio_v5' |
+| `model_overlap.pt` | ResNet-34 U-Net | 'Giulio_v9' |
+
+### OOD Benchmark
+
+| Model | Architecture | Name |
+|---|---|---|
+| `model_baseline.pt` | Vanilla U-Net | 'Giulio_OOD_baseline' |
+| `model_baseline_ood.pt` | Vanilla U-Net + MC Dropout | 'Giulio_ood_v1' |
+| `model_overlap_ood.pt` | ResNet-34 U-Net + MC Dropout | 'Giulio_ood_v4' |
